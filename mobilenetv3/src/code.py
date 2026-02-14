@@ -132,6 +132,7 @@ class InvertedResidual(nn.Module):
 class MobileNetV3(nn.Module):
     def __init__(self, cfgs, mode, num_classes=1000, width_mult=1.):
         super(MobileNetV3, self).__init__()
+        self.width_mult=width_mult
         # setting of inverted residual blocks
         self.cfgs = cfgs
         assert mode in ['large', 'small']
@@ -182,6 +183,158 @@ class MobileNetV3(nn.Module):
             elif isinstance(m, nn.Linear):
                 m.weight.data.normal_(0, 0.01)
                 m.bias.data.zero_()
+
+    def count_parameters(self, trainable_only: bool = True) -> float:
+        """
+        Подсчитывает общее число параметров модели в миллионах
+        
+        Args:
+            trainable_only: считать только обучаемые параметры (requires_grad=True)
+        
+        Returns:
+            float: число параметров в миллионах (M)
+        """
+        if trainable_only:
+            params = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        else:
+            params = sum(p.numel() for p in self.parameters())
+        
+        return params
+    
+    def _calculate_madd(self, input_size=224):
+        """
+        Calculate total multiply-add operations for the network.
+        
+        Analyzes the structure of the initialized model (self.features, self.conv, self.classifier)
+        to determine dimensions and operations, avoiding hardcoding of configs.
+        
+        Returns:
+            total_madd: Total number of MAdd operations
+            details: List of per-layer MAdd breakdown
+        """
+        total_madd = 0
+        details = []
+        
+        h = w = input_size
+        c = 3  # Initial input channels (RGB)
+        
+        # Helper function for Conv2d MAdd calculation
+        def count_conv(m, in_c, in_h, in_w):
+            # Calculate output dimensions
+            # Formula: H_out = floor((H_in + 2*padding - dilation*(kernel-1) - 1)/stride + 1)
+            out_h = (in_h + 2*m.padding[0] - m.dilation[0]*(m.kernel_size[0]-1) - 1)//m.stride[0] + 1
+            out_w = (in_w + 2*m.padding[1] - m.dilation[1]*(m.kernel_size[1]-1) - 1)//m.stride[1] + 1
+            
+            # MAdd = out_elements * ops_per_element
+            # ops_per_element = kernel_h * kernel_w * (in_channels / groups)
+            kernel_ops = m.kernel_size[0] * m.kernel_size[1]
+            in_channels_per_group = in_c // m.groups
+            
+            madd = out_h * out_w * m.out_channels * kernel_ops * in_channels_per_group
+            return madd, m.out_channels, out_h, out_w
+
+        # Helper function for Linear MAdd calculation
+        def count_linear(m):
+            # MAdd = in_features * out_features
+            return m.in_features * m.out_features
+
+        # 1. Analyze self.features
+        # self.features is an nn.Sequential starting with the stem convolution
+        # followed by InvertedResidual blocks.
+        
+        # Process Stem (Index 0 of self.features)
+        stem = self.features[0]
+        # stem is a Sequential: Conv2d -> BN -> h_swish
+        # We only count the Conv2d
+        conv_layer = stem[0]
+        madd, c, h, w = count_conv(conv_layer, c, h, w)
+        total_madd += madd
+        details.append({'name': 'Stem', 'madd_M': madd/10**6, 'size': (h, w), 'channels': c})
+        
+        # Process InvertedResidual blocks (Index 1 onwards)
+        for i, block in enumerate(self.features[1:]):
+            block_madd = 0
+            
+            # Temporary state for the block's internal flow
+            curr_c = c
+            curr_h = h
+            curr_w = w
+            
+            # Inspect block.conv (nn.Sequential)
+            # It contains layers like: Conv, BN, Act, SE, Conv, BN...
+            for sub_module in block.conv:
+                if isinstance(sub_module, nn.Conv2d):
+                    m, curr_c, curr_h, curr_w = count_conv(sub_module, curr_c, curr_h, curr_w)
+                    block_madd += m
+                elif isinstance(sub_module, SELayer):
+                    # SE Layer: Global Pool -> FC -> ReLU -> FC -> Hsigmoid
+                    # We count the two Linear layers inside self.fc
+                    # Input to SE is curr_c channels
+                    fc_seq = sub_module.fc
+                    # fc_seq structure: Linear -> ReLU -> Linear -> Hsigmoid
+                    
+                    # First Linear
+                    l1 = fc_seq[0]
+                    m1 = count_linear(l1)
+                    
+                    # Second Linear
+                    l2 = fc_seq[2]
+                    m2 = count_linear(l2)
+                    
+                    # SE operations apply to all spatial positions (1x1 after pool),
+                    # but usually calculated just for the vector.
+                    # If we assume the SE vector is broadcasted back, the broadcast multiply
+                    # is element-wise (curr_h * curr_w * curr_c), which is often negligible
+                    # compared to convolutions or counted as simple ops.
+                    # Standard practice is to count the FC MAdds.
+                    block_madd += (m1 + m2)
+                    
+            # Check for residual connection add
+            # block.identity is True if stride=1 and inp==oup
+            # The add operation is curr_h * curr_w * curr_c (element-wise add)
+            if block.identity:
+                block_madd += curr_h * curr_w * curr_c
+            
+            total_madd += block_madd
+            details.append({
+                'name': f'Block_{i+1}',
+                'madd_M': madd/10**6,
+                'size': (curr_h, curr_w),
+                'channels': curr_c
+            })
+            
+            # Update global state for next block
+            c = curr_c
+            h = curr_h
+            w = curr_w
+
+        # 2. Analyze self.conv (Final 1x1 conv)
+        # self.conv is a Sequential: Conv -> BN -> h_swish
+        final_conv = self.conv[0]
+        madd, c, h, w = count_conv(final_conv, c, h, w)
+        total_madd += madd
+        details.append({'name': 'Final_Conv', 'madd_M': madd/10**6, 'size': (h, w), 'channels': c})
+
+        # 3. Analyze self.avgpool
+        # AdaptiveAvgPool2d reduces dimensions to 1x1.
+        h, w = 1, 1
+
+        # 4. Analyze self.classifier
+        # Sequential: Linear -> h_swish -> Dropout -> Linear
+        for layer in self.classifier:
+            if isinstance(layer, nn.Linear):
+                madd = count_linear(layer)
+                total_madd += madd
+                details.append({
+                    'name': f'Linear_{layer.out_features}',
+                    'madd_M': madd/10**6,
+                    'in_f': layer.in_features,
+                    'out_f': layer.out_features
+                })
+                c = layer.out_features
+
+        return total_madd, details
+    
 
 
 def mobilenetv3_large(**kwargs):

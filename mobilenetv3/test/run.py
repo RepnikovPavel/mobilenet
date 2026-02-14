@@ -12,9 +12,9 @@ if __name__ == '__main__':
     model.load_state_dict(torch.load('pretrained/mobilenetv3-large-1cd25616.pth'))
     model.to(device)
     model.eval()
-    
+
     class_mapper = ImageNetLabelMapper('/mnt/nvme/datasets/ImageNetLSVRC2012/LOC_synset_mapping.txt')
-    img_path = '/mnt/nvme/datasets/ImageNetLSVRC2012/ILSVRC2012_img_val/ILSVRC2012_val_00033334.JPEG'
+    img_path = '/mnt/nvme/datasets/ImageNetLSVRC2012/ILSVRC2012_img_val/n02106550/ILSVRC2012_val_00033334.JPEG'
 
     img_bgr = cv2.imread(img_path)
     if img_bgr is None:
