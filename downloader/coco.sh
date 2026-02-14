@@ -28,35 +28,3 @@ wget -c http://images.cocodataset.org/annotations/stuff_annotations_trainval2017
 wget -c http://images.cocodataset.org/annotations/image_info_test2017.zip
 wget -c http://images.cocodataset.org/annotations/image_info_unlabeled2017.zip
 
-echo "🔓 Распаковываю..."
-
-# РАСПАКОВКА
-unzip -q train2017.zip
-unzip -q val2017.zip
-unzip -q test2017.zip
-unzip -q annotations_trainval2017.zip
-unzip -q panoptic_annotations_trainval2017.zip
-unzip -q stuff_annotations_trainval2017.zip
-unzip -q image_info_test2017.zip
-unzip -q image_info_unlabeled2017.zip
-
-# ОЧИСТКА
-rm *.zip
-
-echo "✅ Готово! Структура:"
-tree annotations/ -L 2 || find annotations -maxdepth 2 -type d
-
-echo "
-📊 ИТОГОГ SKIPPED (нет разметки):
-├── train2017/ (118K img)
-├── val2017/   (5K img) 
-├── test2017/  (41K img)
-└── annotations/
-    ├── instances_train2017.json     ← Instance segmentation
-    ├── instances_val2017.json       ← Instance segmentation
-    ├── person_keypoints_train2017.json
-    ├── stuff_train2017.json         ← Stuff segmentation
-    ├── stuff_val2017.json
-    ├── panoptic_train2017/          ← Panoptic (things+stuff)
-    ├── panoptic_val2017/
-    └── ..."
