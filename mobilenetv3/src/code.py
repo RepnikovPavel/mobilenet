@@ -9,9 +9,6 @@ import torch.nn as nn
 import math
 
 
-__all__ = ['mobilenetv3_large', 'mobilenetv3_small']
-
-
 def _make_divisible(v, divisor, min_value=None):
     """
     This function is taken from the original tf repo.
@@ -29,6 +26,11 @@ def _make_divisible(v, divisor, min_value=None):
     # Make sure that round down does not go down by more than 10%.
     if new_v < 0.9 * v:
         new_v += divisor
+    
+    # Print warning if input is not divisible by 8
+    if v % 8 != 0:
+        print(f"Warning: input value {v} is not divisible by 8, adjusted to {new_v}")
+    
     return new_v
 
 
