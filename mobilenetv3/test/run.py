@@ -1,6 +1,5 @@
 from mobilenetv3 import mobilenetv3_large
 import torch
-import requests
 from PIL import Image
 from torchvision import transforms
 from ImageNetLabelMapper import ImageNetLabelMapper

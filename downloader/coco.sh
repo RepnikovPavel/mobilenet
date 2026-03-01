@@ -5,7 +5,7 @@
 
 set -e  # Остановка при ошибке
 
-COCO_DIR="${1:-./coco}"
+COCO_DIR="${1:-/mnt/nvme/datasets/COCO2017/}"
 mkdir -p "$COCO_DIR" && cd "$COCO_DIR"
 
 echo "📥 Скачиваю полный COCO 2017 (~48 GB) в $COCO_DIR..."

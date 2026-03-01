@@ -12,7 +12,7 @@ fi
 MOUNT_PATH=$1
  
 IMG_NAME=torchcu124:latest
-CONTAINER_NAME=torchcu124container
+CONTAINER_NAME=mobilenetcontainer
 
 xhost +local:docker
 
